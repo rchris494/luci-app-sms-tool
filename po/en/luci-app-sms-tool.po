@@ -1,0 +1,157 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "SMS Tool"
+msgstr "SMS Tool"
+
+msgid "SMS Tool – Inbox"
+msgstr "SMS Tool – Inbox"
+
+msgid "SMS Tool – Compose"
+msgstr "SMS Tool – Compose"
+
+msgid "SMS Tool – Sent"
+msgstr "SMS Tool – Sent"
+
+msgid "SMS Tool – Drafts"
+msgstr "SMS Tool – Drafts"
+
+msgid "SMS Tool - Settings"
+msgstr "SMS Tool - Settings"
+
+msgid "Inbox"
+msgstr "Inbox"
+
+msgid "Compose"
+msgstr "Compose"
+
+msgid "Sent"
+msgstr "Sent"
+
+msgid "Drafts"
+msgstr "Drafts"
+
+msgid "Settings"
+msgstr "Settings"
+
+msgid "From"
+msgstr "From"
+
+msgid "To"
+msgstr "To"
+
+msgid "Date / Time"
+msgstr "Date / Time"
+
+msgid "Message"
+msgstr "Message"
+
+msgid "Storage"
+msgstr "Storage"
+
+msgid "Actions"
+msgstr "Actions"
+
+msgid "Refresh"
+msgstr "Refresh"
+
+msgid "Loading…"
+msgstr "Loading…"
+
+msgid "View"
+msgstr "View"
+
+msgid "Del"
+msgstr "Del"
+
+msgid "Delete"
+msgstr "Delete"
+
+msgid "Reply"
+msgstr "Reply"
+
+msgid "Close"
+msgstr "Close"
+
+msgid "Send SMS"
+msgstr "Send SMS"
+
+msgid "Save as Draft"
+msgstr "Save as Draft"
+
+msgid "Clear"
+msgstr "Clear"
+
+msgid "Sending…"
+msgstr "Sending…"
+
+msgid "General"
+msgstr "General"
+
+msgid "Enable SMS Tool"
+msgstr "Enable SMS Tool"
+
+msgid "Port Configuration"
+msgstr "Port Configuration"
+
+msgid "Modem Control Port"
+msgstr "Modem Control Port"
+
+msgid "Receive Port"
+msgstr "Receive Port"
+
+msgid "Send Port"
+msgstr "Send Port"
+
+msgid "Baud Rate"
+msgstr "Baud Rate"
+
+msgid "SIM / Storage"
+msgstr "SIM / Storage"
+
+msgid "Default Message Storage"
+msgstr "Default Message Storage"
+
+msgid "SIM PIN"
+msgstr "SIM PIN"
+
+msgid "Max Stored Messages"
+msgstr "Max Stored Messages"
+
+msgid "Polling"
+msgstr "Polling"
+
+msgid "Poll Interval (seconds)"
+msgstr "Poll Interval (seconds)"
+
+msgid "Delete from Modem After Read"
+msgstr "Delete from Modem After Read"
+
+msgid "Save & Apply"
+msgstr "Save & Apply"
+
+msgid "Test Modem Connection"
+msgstr "Test Modem Connection"
+
+msgid "Modem Status"
+msgstr "Modem Status"
+
+msgid "Manufacturer"
+msgstr "Manufacturer"
+
+msgid "Model"
+msgstr "Model"
+
+msgid "IMEI"
+msgstr "IMEI"
+
+msgid "Network"
+msgstr "Network"
+
+msgid "Signal"
+msgstr "Signal"
+
+msgid "SIM Status"
+msgstr "SIM Status"
