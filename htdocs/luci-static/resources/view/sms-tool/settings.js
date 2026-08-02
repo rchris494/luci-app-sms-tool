@@ -3,7 +3,8 @@
 'require form';
 'require rpc';
 
-var callModemInfo = rpc.declare({ object: 'luci.sms-tool', method: 'modem_info' });
+var callModemInfo    = rpc.declare({ object: 'luci.sms-tool', method: 'modem_info' });
+var callApplyStorage = rpc.declare({ object: 'luci.sms-tool', method: 'apply_storage' });
 
 return view.extend({
 	title: _('Settings'),
@@ -53,12 +54,14 @@ return view.extend({
 		s = m.section(form.NamedSection, 'global', 'sms-tool', _('SIM / Storage'));
 		s.addremove = false;
 
-		o = s.option(form.ListValue, 'storage', _('Default Message Storage'));
+		o = s.option(form.ListValue, 'storage', _('Incoming Message Storage'));
 		o.value('SM', 'SM – ' + _('SIM card'));
 		o.value('ME', 'ME – ' + _('Modem/device memory'));
-		o.value('MT', 'MT – ' + _('Both (preferred)'));
 		o.default     = 'ME';
-		o.description = _('SM = SIM card · ME = Modem memory · MT = Modem preferred');
+		o.description = _('Where the modem physically stores newly received SMS. ' +
+			'MT is not a valid store target (it is a read-only combined view), so ' +
+			'it is not offered here. Applied to the modem on Save & Apply. The ' +
+			'Inbox tab can still view SM, ME or MT independently.');
 
 		o = s.option(form.Value, 'pin', _('SIM PIN'));
 		o.password    = true;
@@ -108,6 +111,15 @@ return view.extend({
 			});
 
 			return E('div', {}, [ mapEl, testBtn, testResult ]);
+		});
+	},
+
+	// After committing config, push the chosen incoming-store to the modem so
+	// it takes effect immediately (the init.d reload trigger also covers boot
+	// and CLI/uci changes).
+	handleSaveApply: function(ev, mode) {
+		return view.prototype.handleSaveApply.call(this, ev, mode).then(function(res) {
+			return callApplyStorage().catch(function() {}).then(function() { return res; });
 		});
 	}
 });

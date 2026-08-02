@@ -1,0 +1,40 @@
+#!/bin/sh
+# Re-assert the incoming-message store after the modem's data interface comes
+# up. QMI/MBIM don't touch the AT port or CPMS, but if a connection bring-up
+# ever soft-resets the modem without re-enumerating the ttyUSB ports (so the
+# tty hotplug wouldn't re-fire), this restores AT+CPMS afterwards.
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+# Only for modem-style data devices; the AT control port (cdc-wdm-based QMI/
+# MBIM) stays free, so issuing AT here is safe. Deliberately skips ppp*, where
+# the AT port is held by the link.
+case "$DEVICE" in
+	wwan*|qmimux*) ;;
+	*) exit 0 ;;
+esac
+
+. /lib/functions.sh
+
+config_load sms-tool 2>/dev/null || exit 0
+config_get enabled global enabled 1
+config_get port    global receive_port /dev/ttyUSB2
+config_get baud    global baud_rate 115200
+config_get storage global storage ME
+
+[ "$enabled" = "1" ] || exit 0
+[ -e "$port" ] || exit 0
+
+case "$storage" in
+	SM|ME) ;;
+	*) storage="ME" ;;
+esac
+
+(
+	sleep 2
+	/usr/bin/sms_tool -d "$port" -b "$baud" \
+		at "AT+CPMS=\"$storage\",\"$storage\",\"$storage\"" >/dev/null 2>&1
+	logger -t sms-tool "applied CPMS storage=$storage on $port (ifup $INTERFACE/$DEVICE)"
+) &
+
+exit 0

@@ -1,0 +1,37 @@
+#!/bin/sh
+# Race-proof application of the incoming-message store: fires whenever a tty is
+# added. When the configured modem port appears (at boot or after a re-plug),
+# set AT+CPMS mem3 so received SMS land in the chosen storage.
+
+[ "$ACTION" = "add" ] || exit 0
+[ -n "$DEVNAME" ] || exit 0
+
+. /lib/functions.sh
+
+config_load sms-tool 2>/dev/null || exit 0
+config_get enabled global enabled 1
+config_get port    global receive_port /dev/ttyUSB2
+config_get baud    global baud_rate 115200
+config_get storage global storage ME
+
+[ "$enabled" = "1" ] || exit 0
+
+# Only act on the configured modem control/receive port.
+[ "/dev/$DEVNAME" = "$port" ] || exit 0
+
+# MT is a read-only aggregate, never a valid store target.
+case "$storage" in
+	SM|ME) ;;
+	*) storage="ME" ;;
+esac
+
+# Background: give the option/cdc driver a moment to finish bringing the port
+# up before issuing AT, and don't block hotplug processing.
+(
+	sleep 2
+	/usr/bin/sms_tool -d "$port" -b "$baud" \
+		at "AT+CPMS=\"$storage\",\"$storage\",\"$storage\"" >/dev/null 2>&1
+	logger -t sms-tool "applied CPMS storage=$storage on $port (hotplug)"
+) &
+
+exit 0

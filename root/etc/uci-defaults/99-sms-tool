@@ -1,0 +1,10 @@
+#!/bin/sh
+# First-boot hook (runs once, reliably, even for image-baked packages):
+# enable the service so its config-reload trigger is registered, and kick an
+# initial apply. If the modem port isn't up yet, the tty hotplug handler will
+# apply it the moment it enumerates.
+
+/etc/init.d/sms-tool enable 2>/dev/null
+/etc/init.d/sms-tool start 2>/dev/null
+
+exit 0

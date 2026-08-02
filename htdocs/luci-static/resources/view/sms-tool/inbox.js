@@ -3,23 +3,30 @@
 'require rpc';
 'require ui';
 
-var callRead       = rpc.declare({ object: 'luci.sms-tool', method: 'read',        params: ['storage'] });
-var callDelete     = rpc.declare({ object: 'luci.sms-tool', method: 'delete',      params: ['index', 'storage'] });
-var callStorage    = rpc.declare({ object: 'luci.sms-tool', method: 'storage'      });
-var callSetStorage = rpc.declare({ object: 'luci.sms-tool', method: 'set_storage', params: ['storage'] });
+var callRead     = rpc.declare({ object: 'luci.sms-tool', method: 'read',     params: ['storage'] });
+var callDelete   = rpc.declare({ object: 'luci.sms-tool', method: 'delete',   params: ['index', 'storage'] });
+var callStorage  = rpc.declare({ object: 'luci.sms-tool', method: 'storage'   });
+var callGetState = rpc.declare({ object: 'luci.sms-tool', method: 'get_state' });
+var callSetView  = rpc.declare({ object: 'luci.sms-tool', method: 'set_view', params: ['storage'] });
 
 return view.extend({
 	title: _('Inbox'),
 	order: 10,
 
 	load: function() {
-		return callRead('SM');
+		// Restore the persisted view-storage so the dropdown stays where the
+		// user left it across reloads and navigation.
+		return callGetState().catch(function() { return {}; });
 	},
 
-	render: function(data) {
-		var messages = (data && data.messages) ? data.messages : [];
-		var currentStorage = 'SM';
-		var allMessages = messages;
+	render: function(state) {
+		state = state || {};
+		var valid = { SM: 1, ME: 1, MT: 1 };
+		var initialStorage = valid[state.view_storage] ? state.view_storage
+		                   : (valid[state.storage] ? state.storage : 'SM');
+
+		var currentStorage = initialStorage;
+		var allMessages = [];
 		var selectedMsg = null;
 
 		function esc(s) {
@@ -44,11 +51,11 @@ return view.extend({
 					'<td class="td" style="' + (unread ? 'font-weight:bold;' : '') + '">' + esc(m.from || '—') + '</td>' +
 					'<td class="td" style="white-space:nowrap;font-size:.85em;">' + esc(m.timestamp || '') + '</td>' +
 					'<td class="td" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(m.body || '') + '</td>' +
-					'<td class="td" style="font-size:.8em;">' + storageLabel(currentStorage) + '</td>' +
+					'<td class="td" style="font-size:.8em;">' + storageLabel(m.storage || currentStorage) + '</td>' +
 					'<td class="td" style="white-space:nowrap;">' +
 						'<button class="btn cbi-button view-btn" data-i="' + i + '">' + _('View') + '</button> ' +
 						'<button class="btn cbi-button cbi-button-action reply-btn" data-from="' + esc(m.from || '') + '">' + _('Reply') + '</button> ' +
-						'<button class="btn cbi-button cbi-button-remove del-btn" data-i="' + i + '" data-idx="' + (m.index != null ? m.index : -1) + '">' + _('Del') + '</button>' +
+						'<button class="btn cbi-button cbi-button-remove del-btn" data-i="' + i + '" data-idx="' + (m.index != null ? m.index : -1) + '" data-stor="' + esc(m.storage || currentStorage) + '">' + _('Del') + '</button>' +
 					'</td>';
 				tbody.appendChild(tr);
 			});
@@ -59,10 +66,10 @@ return view.extend({
 		function loadMessages(storage, tbody) {
 			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2em;">' + _('Loading…') + '</td></tr>';
 			currentStorage = storage;
-			// Tell modem which storage to use — persists until changed
-			callSetStorage(storage).then(function() {
-				return callRead(storage);
-			}).then(function(d) {
+			// Viewing only: read from the selected storage. This sets the modem's
+			// read pointer (mem1) but NOT the incoming store (mem3), so browsing
+			// the SIM inbox no longer reroutes new messages to the SIM.
+			callRead(storage).then(function(d) {
 				allMessages = (d && d.messages) ? d.messages : [];
 				renderRows(allMessages, tbody);
 				return callStorage();
@@ -74,10 +81,12 @@ return view.extend({
 		}
 
 		var storSel    = E('select', { class: 'cbi-input-select' }, [
-			E('option', { value: 'SM', selected: 'selected' }, 'SM – ' + _('SIM card')),
+			E('option', { value: 'SM' }, 'SM – ' + _('SIM card')),
 			E('option', { value: 'ME' }, 'ME – ' + _('Modem memory')),
-			E('option', { value: 'MT' }, 'MT – ' + _('All'))
+			E('option', { value: 'MT' }, 'MT – ' + _('All (SIM + Modem)'))
 		]);
+		// Restore the persisted selection.
+		storSel.value = initialStorage;
 		var refreshBtn = E('button', { class: 'btn cbi-button' }, '↻ ' + _('Refresh'));
 		var storBar    = E('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:1em;' },
 			[ E('label', {}, _('Storage:')), storSel, refreshBtn, storInfo ]);
@@ -117,9 +126,9 @@ return view.extend({
 			modal.style.display   = 'flex';
 		}
 
-		function doDelete(index) {
+		function doDelete(index, storage) {
 			if (!confirm(_('Delete this message?'))) return;
-			callDelete(index, currentStorage).then(function(d) {
+			callDelete(index, storage || currentStorage).then(function(d) {
 				if (d && d.success) loadMessages(currentStorage, tbody);
 				else ui.addNotification(null, E('p', _('Delete failed: ') + ((d && d.error) || '')), 'error');
 			});
@@ -130,7 +139,7 @@ return view.extend({
 			if (!btn) return;
 			var i = parseInt(btn.dataset.i);
 			if (btn.classList.contains('view-btn'))        openMsg(i);
-			else if (btn.classList.contains('del-btn'))    doDelete(parseInt(btn.dataset.idx));
+			else if (btn.classList.contains('del-btn'))    doDelete(parseInt(btn.dataset.idx), btn.dataset.stor);
 			else if (btn.classList.contains('reply-btn'))  window.location.href = L.url('admin/modem/luci-app-sms-tool/compose') + '?to=' + encodeURIComponent(btn.dataset.from);
 		});
 
@@ -138,7 +147,7 @@ return view.extend({
 		modalDeleteBtn.addEventListener('click', function() {
 			if (!selectedMsg) return;
 			modal.style.display = 'none';
-			doDelete(selectedMsg.index != null ? selectedMsg.index : -1);
+			doDelete(selectedMsg.index != null ? selectedMsg.index : -1, selectedMsg.storage);
 		});
 		modalReplyBtn.addEventListener('click', function() {
 			var number = selectedMsg ? (selectedMsg.from || '') : '';
@@ -146,9 +155,15 @@ return view.extend({
 		});
 
 		refreshBtn.addEventListener('click', function() { loadMessages(storSel.value, tbody); });
-		storSel.addEventListener('change',   function() { loadMessages(storSel.value, tbody); });
+		storSel.addEventListener('change',   function() {
+			var v = storSel.value;
+			// Persist the view choice so it survives reloads/navigation. This
+			// does NOT touch the modem's incoming store.
+			callSetView(v).catch(function() {});
+			loadMessages(v, tbody);
+		});
 
-		loadMessages('SM', tbody);
+		loadMessages(initialStorage, tbody);
 		setInterval(function() { loadMessages(storSel.value, tbody); }, 60000);
 
 		return E('div', {}, [ storBar, table, modal ]);

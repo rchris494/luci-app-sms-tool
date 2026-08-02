@@ -9,6 +9,8 @@ function get_config() {
 		receive_port: uci.get('sms-tool', 'global', 'receive_port') || '/dev/ttyUSB2',
 		baud_rate:    uci.get('sms-tool', 'global', 'baud_rate')    || '115200',
 		storage:      uci.get('sms-tool', 'global', 'storage')      || 'SM',
+		view_storage: uci.get('sms-tool', 'global', 'view_storage')
+		              || uci.get('sms-tool', 'global', 'storage')   || 'SM',
 	};
 }
 
@@ -31,8 +33,21 @@ function run_at(port, baud, cmd) {
 	return join('\n', result);
 }
 
-function set_cpms(port, baud, storage) {
-	run_at(port, baud, 'AT+CPMS=\\"' + storage + '\\",\\"' + storage + '\\",\\"' + storage + '\\"');
+// Point ONLY mem1 (the read/delete pointer) at a storage. Safe for SM/ME/MT.
+// This does NOT change where incoming messages are stored (mem3), so browsing
+// any inbox never reroutes new SMS.
+function set_read_mem(port, baud, storage) {
+	run_at(port, baud, 'AT+CPMS=\\"' + storage + '\\"');
+}
+
+// Set the incoming-message store: mem1/mem2/mem3 all to one concrete storage.
+// MT is NOT a valid store target on essentially all modems (it is a read-only
+// aggregate), so callers must use SM or ME. Invalid input falls back to SM.
+function set_store(port, baud, storage) {
+	if (storage != 'SM' && storage != 'ME') storage = 'SM';
+	run_at(port, baud,
+		'AT+CPMS=\\"' + storage + '\\",\\"' + storage + '\\",\\"' + storage + '\\"');
+	return storage;
 }
 
 return {
@@ -52,16 +67,35 @@ return {
 			}
 		},
 
-		// Called explicitly when user changes storage dropdown or saves settings
-		set_storage: {
+		// Persist which storage the Inbox is *viewing*. Writes uci only; never
+		// issues AT+CPMS, so selecting the SIM inbox no longer reroutes incoming
+		// messages to the SIM. This is what makes the dropdown "stay put".
+		set_view: {
 			args: { storage: 'SM' },
 			call: function(req) {
-				let storage = req.args.storage;
-				if (storage != 'SM' && storage != 'ME' && storage != 'MT')
-					storage = 'SM';
+				let v = req.args.storage;
+				if (v != 'SM' && v != 'ME' && v != 'MT') v = 'SM';
+				uci.set('sms-tool', 'global', 'view_storage', v);
+				uci.commit('sms-tool');
+				return { success: true, view_storage: v };
+			}
+		},
+
+		// Apply the configured incoming-store (uci 'storage') to the modem now.
+		// Called by Settings on Save & Apply and by the init script at boot.
+		apply_storage: {
+			call: function() {
 				let c = get_config();
-				set_cpms(c.receive_port, c.baud_rate, storage);
-				return { success: true, storage: storage };
+				let s = set_store(c.receive_port, c.baud_rate, c.storage);
+				return { success: true, storage: s };
+			}
+		},
+
+		// Return persisted state so the Inbox can restore its dropdown.
+		get_state: {
+			call: function() {
+				let c = get_config();
+				return { storage: c.storage, view_storage: c.view_storage };
 			}
 		},
 
@@ -72,23 +106,37 @@ return {
 				if (storage != 'SM' && storage != 'ME' && storage != 'MT')
 					storage = 'SM';
 				let c = get_config();
-				// Do NOT call set_cpms here — modem remembers last setting
-				// set_storage is called explicitly by JS on dropdown change
-				let out = run('-d ' + c.receive_port + ' -b ' + c.baud_rate +
-					' -s ' + storage + ' -j recv');
-				let result = null;
-				try { result = json(out); } catch(e) {}
-				if (!result || !result.msg)
-					return { messages: [] };
-				let messages = map(result.msg, function(m) {
-					return {
-						index:     m.index,
-						from:      m.sender,
-						timestamp: m.timestamp,
-						body:      m.content,
-						status:    'REC READ'
-					};
-				});
+
+				// "MT" is not reliable as an aggregate — many modems implement it
+				// as ME-only, so the SIM messages never appear. Read SM and ME
+				// separately and merge, tagging each message with where it truly
+				// lives so the UI can badge it and delete can target it correctly.
+				let stores = (storage == 'MT') ? [ 'SM', 'ME' ] : [ storage ];
+				let messages = [];
+
+				for (let i = 0; i < length(stores); i++) {
+					let st = stores[i];
+					// sms_tool -s issues `AT+CPMS="<s>"` (mem1 only). Incoming
+					// store (mem3) is untouched, so viewing never reroutes SMS.
+					let out = run('-d ' + c.receive_port + ' -b ' + c.baud_rate +
+						' -s ' + st + ' -j recv');
+					let result = null;
+					try { result = json(out); } catch(e) {}
+					if (!result || !result.msg)
+						continue;
+					for (let k = 0; k < length(result.msg); k++) {
+						let m = result.msg[k];
+						push(messages, {
+							index:     m.index,
+							storage:   st,
+							from:      m.sender,
+							timestamp: m.timestamp,
+							body:      m.content,
+							status:    'REC READ'
+						});
+					}
+				}
+
 				return { messages: messages };
 			}
 		},
@@ -100,13 +148,12 @@ return {
 				let p = c.receive_port;
 				let b = c.baud_rate;
 				let storage = req.args.storage;
-				if (storage != 'SM' && storage != 'ME')
+				if (storage != 'SM' && storage != 'ME' && storage != 'MT')
 					storage = 'SM';
-				// Must set storage context before delete
-				set_cpms(p, b, storage);
+				// Point mem1 at the storage being viewed, then delete. mem3 is
+				// left alone so deleting never changes the incoming-store.
+				set_read_mem(p, b, storage);
 				let out = run_at(p, b, 'AT+CMGD=' + int(req.args.index) + ',0');
-				// Restore after delete
-				set_cpms(p, b, get_config().storage);
 				if (index(out, 'ERROR') < 0)
 					return { success: true };
 				return { error: 'AT+CMGD failed: ' + out };

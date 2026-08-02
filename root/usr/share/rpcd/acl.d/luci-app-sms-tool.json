@@ -2,22 +2,22 @@
 	"luci-app-sms-tool": {
 		"description": "Grant access to SMS Tool resources",
 		"read": {
-			"uci": ["sms-tool"],
+			"uci": [ "sms-tool" ],
 			"ubus": {
-				"luci.sms-tool": ["send", "read", "delete", "storage", "modem_info", "set_storage"]
+				"luci.sms-tool": [ "send", "read", "delete", "storage", "modem_info", "get_state", "set_view", "apply_storage" ]
 			},
 			"file": {
-				"/var/log/sms-tool.log": ["read"],
-				"/var/run/sms-tool/messages.json": ["read"]
+				"/var/log/sms-tool.log": [ "read" ],
+				"/var/run/sms-tool/messages.json": [ "read" ]
 			}
 		},
 		"write": {
-			"uci": ["sms-tool"],
+			"uci": [ "sms-tool" ],
 			"ubus": {
-				"luci.sms-tool": ["send", "delete", "set_storage"]
+				"luci.sms-tool": [ "send", "delete", "set_view", "apply_storage" ]
 			},
 			"file": {
-				"/var/run/sms-tool/messages.json": ["read", "write"]
+				"/var/run/sms-tool/messages.json": [ "read", "write" ]
 			}
 		}
 	}

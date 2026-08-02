@@ -1,0 +1,52 @@
+#!/bin/sh /etc/rc.common
+# Applies the configured incoming-message store (AT+CPMS mem3) to the modem so
+# newly received SMS physically land where the user selected. Runs at boot,
+# on Save & Apply (procd reload trigger), and can be run manually.
+# NOTE: boot-time application is best-effort; the authoritative race-proof
+# path is the tty hotplug handler (/etc/hotplug.d/tty/40-sms-tool), which fires
+# when the modem serial port actually enumerates.
+
+START=95
+STOP=10
+USE_PROCD=1
+
+apply_storage() {
+	local enabled port baud storage i
+
+	config_load sms-tool
+	config_get enabled global enabled 1
+	config_get port    global receive_port /dev/ttyUSB2
+	config_get baud    global baud_rate 115200
+	config_get storage global storage ME
+
+	[ "$enabled" = "1" ] || return 0
+
+	# MT is a read-only aggregate, never a valid store target.
+	case "$storage" in
+		SM|ME) ;;
+		*) storage="ME" ;;
+	esac
+
+	# The USB serial port can appear a few seconds after boot. Wait, bounded.
+	i=0
+	while [ ! -e "$port" ] && [ "$i" -lt 10 ]; do sleep 1; i=$((i+1)); done
+	[ -e "$port" ] || return 0
+
+	# mem1/mem2/mem3 -> chosen storage. mem3 routes incoming SMS.
+	/usr/bin/sms_tool -d "$port" -b "$baud" \
+		at "AT+CPMS=\"$storage\",\"$storage\",\"$storage\"" >/dev/null 2>&1
+	logger -t sms-tool "applied CPMS storage=$storage on $port (init)"
+}
+
+start_service() {
+	# Background so a slow-enumerating modem doesn't stall the boot sequence.
+	( apply_storage ) &
+}
+
+reload_service() {
+	apply_storage
+}
+
+service_triggers() {
+	procd_add_reload_trigger "sms-tool"
+}

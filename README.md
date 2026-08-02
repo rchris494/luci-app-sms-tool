@@ -1,6 +1,12 @@
 # luci-app-sms-tool
 
-A full-featured LuCI application for OpenWrt that lets you **send and receive SMS messages** via an attached USB/serial modem, with configurable send/receive ports and both SIM-card (SM) and modem-memory (ME) storage support.
+A LuCI application for OpenWrt that lets you **send and receive SMS** through an
+attached USB/serial modem, with independent SIM-card (SM) and modem-memory (ME)
+storage and a merged "All" inbox view.
+
+It is a modern client-side LuCI app: the UI is JavaScript (rendered in the
+browser) and the backend is a **ucode script exposed over ubus via rpcd**. There
+is no Lua controller, no `.htm` templates, and no background polling daemon.
 
 ---
 
@@ -8,182 +14,264 @@ A full-featured LuCI application for OpenWrt that lets you **send and receive SM
 
 | Feature | Detail |
 |---|---|
-| Send SMS | PDU-mode AT commands, auto-retry |
-| Receive SMS | Polls modem on a configurable interval |
-| Storage | SIM (SM), Modem memory (ME), or both (MT) |
-| Port config | Separate configurable send and receive serial ports |
-| Baud rate | 9600 – 460800, configurable per modem |
-| SIM PIN | Optional automatic PIN unlock |
-| Inbox | Filterable table with full-message viewer |
-| Compose | Character counter, multi-part SMS support (up to 6 parts) |
-| Sent log | Cached locally on the router |
-| Drafts | Browser localStorage |
-| Modem info | Manufacturer, model, IMEI, signal strength, network |
+| Send SMS | Via `sms_tool` (handles PDU encoding); success detected from the modem's `+CMGS` reply |
+| Receive SMS | Read on demand; the Inbox auto-refreshes client-side every 60 s |
+| Storage (incoming) | SIM (`SM`) or modem memory (`ME`) — applied to the modem with `AT+CPMS` |
+| Inbox view | `SM`, `ME`, or **All (SIM + Modem)**; the view choice is persisted |
+| "All" view | Reads SM and ME separately and merges them, tagging each message with its real storage (does **not** rely on the modem's `MT`, which many modules implement as ME-only) |
+| Per-message delete | Deletes from the message's own storage, so index collisions between SM and ME are handled correctly |
+| Port config | Separate send / receive / control ports, configurable |
+| Baud rate | Configurable |
+| Compose | Live character counter, multi-part concatenated SMS up to 6 parts (918 chars) |
+| Sent log | Browser `localStorage` |
+| Drafts | Browser `localStorage` |
+| Modem info | Manufacturer, model, IMEI, signal, network operator |
 | Storage info | Live SIM and modem slot usage |
-| Init service | procd-managed daemon, auto-restarts on crash |
 
 ---
 
-## Directory Layout
+## Architecture
+
+```
+Browser (LuCI JS views)
+        │  ubus / rpcd
+        ▼
+ucode backend  ──►  /usr/bin/sms_tool  ──►  modem (AT over /dev/ttyUSBx)
+```
+
+* **Views** — `htdocs/luci-static/resources/view/sms-tool/*.js` render the pages
+  and call the backend over ubus (`rpc.declare`).
+* **Backend** — `root/usr/share/rpcd/ucode/luci.sms-tool` is a ucode object
+  published as ubus object `luci.sms-tool`. It shells out to `sms_tool`.
+* **ACL** — `root/usr/share/rpcd/acl.d/luci-app-sms-tool.json` grants the LuCI
+  session access to the ubus methods and the `sms-tool` uci config.
+* **Storage application** — an init script, a tty hotplug hook, and an iface
+  hotplug hook apply the incoming-store (`AT+CPMS`) to the modem. See
+  *Storage model* below.
+
+### Directory layout
 
 ```
 luci-app-sms-tool/
 ├── Makefile
 ├── README.md
-├── luasrc/
-│   ├── controller/
-│   │   └── sms-tool.lua          # LuCI controller + JSON API endpoints
-│   └── view/sms-tool/
-│       ├── inbox.htm             # Inbox (receive)
-│       ├── compose.htm           # Compose (send)
-│       ├── sent.htm              # Sent messages
-│       ├── drafts.htm            # Draft messages
-│       └── settings.htm         # Port / modem / storage settings
 ├── po/en/
-│   └── luci-app-sms-tool.po      # English i18n strings
+│   └── luci-app-sms-tool.po                     # i18n strings
+├── htdocs/luci-static/resources/view/sms-tool/
+│   ├── inbox.js                                 # Inbox (receive, view switch, delete)
+│   ├── compose.js                               # Compose (send) + modem info
+│   ├── sent.js                                  # Sent log (localStorage)
+│   ├── drafts.js                                # Drafts (localStorage)
+│   └── settings.js                              # Port / storage settings
 └── root/
     ├── etc/
-    │   ├── config/sms-tool       # UCI configuration file
-    │   └── init.d/sms-tool       # procd init script
-    └── usr/
-        ├── sbin/sms-tool         # Backend shell script
-        └── share/rpcd/acl.d/
-            └── luci-app-sms-tool.json  # RPCD ACL
+    │   ├── config/sms-tool                      # UCI config
+    │   ├── init.d/sms-tool                      # Applies AT+CPMS at boot; reload trigger
+    │   ├── uci-defaults/99-sms-tool             # First-boot: enable + start service
+    │   └── hotplug.d/
+    │       ├── tty/40-sms-tool                  # Apply AT+CPMS when the modem tty appears
+    │       └── iface/40-sms-tool                # Re-apply after a wwan* interface comes up
+    └── usr/share/
+        ├── luci/menu.d/luci-app-sms-tool.json   # Menu: Modem → SMS Messages
+        └── rpcd/
+            ├── acl.d/luci-app-sms-tool.json     # ubus/uci ACL
+            └── ucode/luci.sms-tool              # ucode backend
 ```
 
 ---
 
 ## Dependencies
 
+Only one runtime dependency, plus `luci-base` (pulled in automatically):
+
 ```
 luci-base
-sms-tool          (OpenWrt package for basic gammu/AT wrapper)
-microcom          (serial terminal for AT commands, part of busybox-extras)
+sms-tool          # provides /usr/bin/sms_tool (obsy's AT-based SMS utility)
 ```
 
-Install with:
 ```sh
 opkg update
-opkg install luci-app-sms-tool microcom
+opkg install sms-tool
+# then install the luci-app-sms-tool .ipk
 ```
+
+`gammu` and `microcom` are **not** required.
 
 ---
 
-## UCI Configuration
+## Menu location
+
+**LuCI → Modem → SMS Messages** (Inbox / Compose / Sent / Drafts / Settings).
+The parent *Modem* menu is shared with other modem apps; if you have none, this
+app provides the entry.
+
+---
+
+## Storage model
+
+This is the part most modems get subtly wrong, so it's worth reading once.
+
+The modem tracks SMS memory in three `AT+CPMS` slots: mem1 (read/delete
+pointer), mem2 (send/write), and mem3 (**where incoming messages are stored**).
+Two independent concepts in this app map onto those slots:
+
+### Incoming store — `uci` option `storage`
+
+Where the modem physically files **newly received** SMS (mem3). Must be a
+concrete storage:
+
+| Value | Meaning |
+|---|---|
+| `SM` | SIM card |
+| `ME` | Modem/device memory (default) |
+
+`MT` is **not** valid here — it is a read-only aggregate on the modem, not a
+store target, so it is not offered in Settings.
+
+This value is pushed to the modem with `AT+CPMS="<s>","<s>","<s>"` at the
+points listed under *When the incoming store is applied*. Change it in
+**Settings → SIM / Storage → Incoming Message Storage** and Save & Apply.
+
+### Inbox view — `uci` option `view_storage`
+
+Which storage the **Inbox lists** (mem1 only; this never changes where incoming
+messages land):
+
+| Value | Meaning |
+|---|---|
+| `SM` | SIM only |
+| `ME` | Modem only |
+| `MT` | **All** — SM and ME read separately and merged |
+
+Because some modem firmware implements `MT` as ME-only (the SIM messages never
+appear), the **All** view does not trust the modem's `MT`. The backend reads
+`SM` and `ME` in turn and concatenates the results, tagging each message with
+its true storage. That tag is used to badge each row and to delete from the
+correct memory (index 0 can exist on both SM and ME).
+
+The dropdown selection is persisted to `view_storage`, so the Inbox reopens on
+the storage you last used.
+
+### When the incoming store is applied
+
+`AT+CPMS` mem3 is asserted:
+
+1. **tty hotplug** (`/etc/hotplug.d/tty/40-sms-tool`) — when the configured
+   modem port enumerates. This is the authoritative path and defeats the
+   USB-serial boot race (the port often appears seconds after boot).
+2. **iface hotplug** (`/etc/hotplug.d/iface/40-sms-tool`) — when a `wwan*`
+   data interface comes up, in case connection setup reset the modem.
+3. **init** (`/etc/init.d/sms-tool`) — at boot (bounded wait for the port) and
+   on `reload` via a procd config-reload trigger.
+4. **Save & Apply** on the Settings page — the UI also calls the backend
+   `apply_storage` method directly for immediate effect.
+
+Every application logs to `logread -e sms-tool`.
+
+---
+
+## UCI configuration
 
 ```uci
 config sms-tool 'global'
-    option enabled          '1'
-    option modem_port       '/dev/ttyUSB2'   # AT command / control port
-    option receive_port     '/dev/ttyUSB1'   # Port used to READ incoming SMS
-    option send_port        '/dev/ttyUSB2'   # Port used to SEND SMS
-    option baud_rate        '115200'
-    option pin              ''               # SIM PIN (leave blank if none)
-    option storage          'SM'             # SM=SIM, ME=modem, MT=both
-    option poll_interval    '30'             # seconds between inbox polls
-    option max_messages     '500'
-    option delete_after_read '0'            # 1 = delete from modem after fetch
-    option log_enabled      '1'
-    option log_file         '/var/log/sms-tool.log'
+    option enabled       '1'             # honored: gates the boot/hotplug CPMS apply
+    option receive_port  '/dev/ttyUSB2'  # honored: read/delete/status/AT port
+    option send_port     '/dev/ttyUSB2'  # honored: send port
+    option baud_rate     '115200'        # honored
+    option storage       'ME'            # honored: incoming store (mem3), SM|ME
+    option view_storage  'ME'            # honored: Inbox view, SM|ME|MT (set from UI)
 ```
 
-Edit via LuCI → Services → SMS Tool → Settings, or directly:
+### Reserved / not yet wired
+
+These keys ship in the default config and/or appear on the Settings page, but
+the backend does not currently read them. They are safe to leave as-is:
+
+```
+modem_port          # shown in UI; backend uses receive_port/send_port
+pin                 # no automatic PIN unlock is implemented
+max_messages        # not enforced
+poll_interval       # Inbox refresh is a fixed 60 s client-side timer
+delete_after_read   # not implemented
+log_enabled/log_file
+```
+
+Apply changes:
+
 ```sh
-uci set sms-tool.global.receive_port=/dev/ttyUSB0
-uci set sms-tool.global.send_port=/dev/ttyUSB1
+uci set sms-tool.global.storage='ME'
 uci commit sms-tool
-/etc/init.d/sms-tool restart
+/etc/init.d/sms-tool reload      # re-applies AT+CPMS to the modem
 ```
 
 ---
 
-## Port Configuration
+## Finding your modem's ports
 
-Most USB modems expose **multiple serial interfaces**:
+Most modems expose several serial interfaces; the AT/control port is the one
+this app talks to.
 
-| Interface | Typical use |
-|---|---|
-| `/dev/ttyUSB0` | Diagnostic / NMEA |
-| `/dev/ttyUSB1` | AT commands (receive, status) |
-| `/dev/ttyUSB2` | AT commands (send, PPP data) |
-| `/dev/ttyUSB3` | Audio / reserved |
-
-You can set the **receive port** and **send port** independently, which is useful when:
-- Your modem locks one port during a data session
-- You want to separate read polling from send operations
-- You have a dual-SIM modem with separate logical interfaces
-
-To discover your modem's ports:
 ```sh
 ls /dev/ttyUSB* /dev/ttyACM*
-dmesg | grep tty
+dmesg | grep -i tty
+# confirm which port answers AT:
+sms_tool -d /dev/ttyUSB2 at 'AT'
 ```
 
----
-
-## Message Storage
-
-| Value | Description |
-|---|---|
-| `SM` | SIM card memory (typically 20–50 slots) |
-| `ME` | Modem/device internal memory (varies by modem) |
-| `MT` | Modem-preferred — uses ME first, falls back to SM |
-
-Switch storage at runtime from the Inbox page without restarting the service.
+Set `receive_port` / `send_port` to that port in Settings.
 
 ---
 
-## Backend CLI
+## Backend / debugging
 
-The `/usr/sbin/sms-tool` script can be used directly from the command line:
+There is no `sms-tool` CLI wrapper. The backend is the `sms_tool` binary plus
+the ubus object. Useful commands from the router shell:
 
 ```sh
-# Send an SMS
-sms-tool send +447700900123 "Hello from OpenWrt"
+# Raw reads via the underlying binary
+sms_tool -d /dev/ttyUSB2 -s SM -j recv
+sms_tool -d /dev/ttyUSB2 -s ME -j recv
 
-# List messages from SIM
-sms-tool read SM
+# Inspect / set the CPMS slots directly
+sms_tool -d /dev/ttyUSB2 at 'AT+CPMS?'
+sms_tool -d /dev/ttyUSB2 at 'AT+CPMS="ME","ME","ME"'
 
-# List messages from modem memory
-sms-tool read ME
+# Send
+sms_tool -d /dev/ttyUSB2 send "+15551234567" "Hello from OpenWrt"
 
-# Delete message index 3 from SIM
-sms-tool delete 3 SM
-
-# Show storage usage
-sms-tool storage
-
-# Show modem info
-sms-tool modem_info
-
-# Start the polling daemon manually
-sms-tool daemon
-
-# Initialise modem (PIN unlock, storage set, PDU mode)
-sms-tool init
+# Exercise the app's backend directly over ubus
+ubus call luci.sms-tool get_state
+ubus call luci.sms-tool read    '{"storage":"MT"}'
+ubus call luci.sms-tool storage
+ubus call luci.sms-tool modem_info
+ubus call luci.sms-tool apply_storage
 ```
+
+ubus methods provided by `luci.sms-tool`: `send`, `read`, `delete`,
+`storage`, `modem_info`, `get_state`, `set_view`, `apply_storage`.
 
 ---
 
 ## Building
 
-Place this directory inside `feeds/luci/applications/` of your OpenWrt buildroot, then:
+Place this directory in your OpenWrt buildroot under the LuCI feed
+(`feeds/luci/applications/luci-app-sms-tool`), then:
 
 ```sh
 ./scripts/feeds update luci
 ./scripts/feeds install luci-app-sms-tool
-make package/luci-app-sms-tool/compile V=s
+make package/luci-app-sms-tool/{clean,compile} V=s
 ```
 
-The `.ipk` will be in `bin/packages/<arch>/luci/`.
+Bump `PKG_RELEASE` when changing files so buildroot rebuilds instead of reusing
+a cached stamp. The `.ipk` lands in `bin/packages/<arch>/luci/`.
 
 ---
 
 ## Logs
 
 ```sh
-logread | grep sms-tool
-tail -f /var/log/sms-tool.log
+logread -e sms-tool          # CPMS apply events (boot/hotplug/ifup)
 ```
 
 ---
