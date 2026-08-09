@@ -47,7 +47,7 @@ return view.extend({
 				if (!d) return;
 				drafts.splice(i, 1);
 				localStorage.setItem('sms_drafts', JSON.stringify(drafts));
-				window.location.href = L.url('admin/modem/sms-tool/compose') +
+				window.location.href = L.url('admin/modem/luci-app-sms-tool/compose') +
 					'?to='   + encodeURIComponent(d.number) +
 					'&body=' + encodeURIComponent(d.body);
 			} else if (btn.classList.contains('del-btn')) {

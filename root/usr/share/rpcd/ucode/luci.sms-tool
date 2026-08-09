@@ -14,6 +14,15 @@ function get_config() {
 	};
 }
 
+// Shell-quote an arbitrary value so it survives /bin/sh word-splitting and
+// expansion intact (fs.popen runs the string through the shell). Wraps the
+// value in single quotes and escapes any embedded single quote as '\''.
+// This is what prevents SMS bodies, numbers or config values that contain
+// quotes, $(...), backticks etc. from being interpreted as shell syntax.
+function shq(s) {
+	return "'" + replace('' + s, /'/g, "'\\''") + "'";
+}
+
 function run(args) {
 	let fd = fs.popen('/usr/bin/sms_tool ' + args, 'r');
 	if (!fd) return '';
@@ -23,7 +32,7 @@ function run(args) {
 }
 
 function run_at(port, baud, cmd) {
-	let out = run('-d ' + port + ' -b ' + baud + ' at "' + cmd + '"');
+	let out = run('-d ' + shq(port) + ' -b ' + shq(baud) + ' at ' + shq(cmd));
 	let lines = split(out, '\n');
 	let result = [];
 	for (let i = 1; i < length(lines); i++) {
@@ -37,7 +46,7 @@ function run_at(port, baud, cmd) {
 // This does NOT change where incoming messages are stored (mem3), so browsing
 // any inbox never reroutes new SMS.
 function set_read_mem(port, baud, storage) {
-	run_at(port, baud, 'AT+CPMS=\\"' + storage + '\\"');
+	run_at(port, baud, 'AT+CPMS="' + storage + '"');
 }
 
 // Set the incoming-message store: mem1/mem2/mem3 all to one concrete storage.
@@ -46,7 +55,7 @@ function set_read_mem(port, baud, storage) {
 function set_store(port, baud, storage) {
 	if (storage != 'SM' && storage != 'ME') storage = 'SM';
 	run_at(port, baud,
-		'AT+CPMS=\\"' + storage + '\\",\\"' + storage + '\\",\\"' + storage + '\\"');
+		'AT+CPMS="' + storage + '","' + storage + '","' + storage + '"');
 	return storage;
 }
 
@@ -59,9 +68,9 @@ return {
 				if (!req.args.number || !req.args.message)
 					return { error: 'number and message required' };
 				let c = get_config();
-				let out = run('-d ' + c.send_port + ' -b ' + c.baud_rate +
-					' send "' + req.args.number + '" "' + req.args.message + '"');
-				if (index(out, 'sucessfully') >= 0)
+				let out = run('-d ' + shq(c.send_port) + ' -b ' + shq(c.baud_rate) +
+					' send ' + shq(req.args.number) + ' ' + shq(req.args.message));
+				if (index(out, 'sucessfully') >= 0 || index(out, 'successfully') >= 0)
 					return { success: true, mr: trim(out) };
 				return { error: trim(out) || 'send failed' };
 			}
@@ -118,8 +127,8 @@ return {
 					let st = stores[i];
 					// sms_tool -s issues `AT+CPMS="<s>"` (mem1 only). Incoming
 					// store (mem3) is untouched, so viewing never reroutes SMS.
-					let out = run('-d ' + c.receive_port + ' -b ' + c.baud_rate +
-						' -s ' + st + ' -j recv');
+					let out = run('-d ' + shq(c.receive_port) + ' -b ' + shq(c.baud_rate) +
+						' -s ' + shq(st) + ' -j recv');
 					let result = null;
 					try { result = json(out); } catch(e) {}
 					if (!result || !result.msg)
@@ -165,8 +174,8 @@ return {
 				let c = get_config();
 				let p = c.receive_port;
 				let b = c.baud_rate;
-				let sm_out = run('-d ' + p + ' -b ' + b + ' -s SM status');
-				let me_out = run('-d ' + p + ' -b ' + b + ' -s ME status');
+				let sm_out = run('-d ' + shq(p) + ' -b ' + shq(b) + ' -s SM status');
+				let me_out = run('-d ' + shq(p) + ' -b ' + shq(b) + ' -s ME status');
 				let sm_used = 0, sm_total = 0, me_used = 0, me_total = 0;
 				let m;
 				m = match(sm_out, /used: ([0-9]+), total: ([0-9]+)/);
